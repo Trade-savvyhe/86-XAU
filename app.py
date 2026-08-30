@@ -6,16 +6,17 @@ import requests
 import streamlit as st
 import yfinance as yf
 
-st.set_page_config(page_title="XAUUSD SMC Scanner", page_icon="📈", layout="wide")
+st.set_page_config(page_title="XAUUSD SMC Scanner", page_icon="⚡", layout="wide")
 
 # ============================================================
 # CONFIGURATION & CONSTANTS
 # ============================================================
 DEFAULT_WEBHOOK = "https://discord.com/api/webhooks/1543551750647062558/AvecdYeit6FzvlHM64r_d-nkL-Vho2YifxA4ROp16MB6OhkmlNj1UDlvFeW_BnWrgYdV"
 
-SYMBOL = "GC=F"  # Gold Futures (XAU/USD equivalent on Yahoo Finance)
+SYMBOL = "GC=F"  # Gold Futures (XAU/USD equivalent)
 INTERVAL = "15m"
 PERIOD = "5d"
+REFRESH_SECONDS = 5  # Ultra-fast 5-second scan rate
 
 SL_PIPS = 50
 TP1_PIPS = 40
@@ -33,7 +34,7 @@ def send_discord_alert(webhook_url: str, signal: dict):
         return
 
     is_buy = signal["direction"] == "BUY"
-    color = 0x2ECC71 if is_buy else 0xE74C3C  # Green or Red
+    color = 0x2ECC71 if is_buy else 0xE74C3C  # Emerald Green or Crimson Red
 
     embed = {
         "title": f"🚨 NEW GOLD (15M) SMC SETUP: {signal['direction']}",
@@ -47,13 +48,13 @@ def send_discord_alert(webhook_url: str, signal: dict):
             {"name": "TP 1 (40p - 50% & BE)", "value": f"**${signal['tp1']:.2f}**", "inline": True},
             {"name": "TP 2 (80p - Runner)", "value": f"**${signal['tp2']:.2f}**", "inline": True},
         ],
-        "footer": {"text": "XAUUSD SMC Institutional Scanner"},
+        "footer": {"text": "XAUUSD SMC Institutional Scanner • 5s Real-Time"},
         "timestamp": datetime.utcnow().isoformat(),
     }
 
     payload = {"username": "Gold SMC Bot", "embeds": [embed]}
     try:
-        requests.post(webhook_url, json=payload, timeout=8)
+        requests.post(webhook_url, json=payload, timeout=5)
     except Exception as e:
         st.error(f"Failed to dispatch Discord webhook: {e}")
 
@@ -79,7 +80,7 @@ def fetch_live_candles():
             df[col] = pd.to_numeric(df[col], errors="coerce")
         return df.dropna(subset=["open", "high", "low", "close"]).reset_index(drop=True)
     except Exception as e:
-        st.error(f"Error fetching market data: {e}")
+        time.sleep(2)  # Short backoff on connection error
         return None
 
 
@@ -144,7 +145,7 @@ def scan_latest_signal(df: pd.DataFrame):
 # ============================================================
 # STREAMLIT DASHBOARD INTERFACE
 # ============================================================
-st.title("⚡ XAUUSD 15M Live SMC Scanner")
+st.title("⚡ XAUUSD 15M Live SMC Scanner (5s Interval)")
 
 if "last_alert_id" not in st.session_state:
     st.session_state.last_alert_id = None
@@ -152,7 +153,7 @@ if "signals_history" not in st.session_state:
     st.session_state.signals_history = []
 
 webhook_url = st.sidebar.text_input("Discord Webhook URL", value=DEFAULT_WEBHOOK, type="password")
-auto_scan = st.sidebar.toggle("Auto-Refresh Scanner (Every 60s)", value=True)
+auto_scan = st.sidebar.toggle("Auto-Refresh Scanner (Every 5s)", value=True)
 
 df = fetch_live_candles()
 
@@ -162,7 +163,7 @@ if df is not None:
     col1.metric("Current Gold Price", f"${latest_candle['close']:.2f}")
     col2.metric("Candle High", f"${latest_candle['high']:.2f}")
     col3.metric("Candle Low", f"${latest_candle['low']:.2f}")
-    col4.metric("Last Update (UTC)", latest_candle["time"].strftime("%H:%M:%S"))
+    col4.metric("Last Check (UTC)", datetime.utcnow().strftime("%H:%M:%S"))
 
     signal = scan_latest_signal(df)
 
@@ -177,9 +178,9 @@ if df is not None:
             st.session_state.signals_history.append(signal)
             if webhook_url:
                 send_discord_alert(webhook_url, signal)
-                st.toast("✅ Alert sent to Discord!")
+                st.toast("✅ Alert sent to Discord instantly!")
     else:
-        st.info("Scanning... No active mitigation setup on current 15M candle.")
+        st.info("Scanning every 5s... No active mitigation setup on current candle.")
 
     st.subheader("Recent 15M Market Data")
     st.dataframe(df[["time", "open", "high", "low", "close", "volume"]].tail(10), use_container_width=True)
@@ -188,8 +189,8 @@ if df is not None:
         st.subheader("Triggered Alerts Log")
         st.dataframe(pd.DataFrame(st.session_state.signals_history), use_container_width=True)
 else:
-    st.warning("Connecting to market data feed...")
+    st.warning("Fetching real-time tick...")
 
 if auto_scan:
-    time.sleep(60)
+    time.sleep(REFRESH_SECONDS)
     st.rerun()
