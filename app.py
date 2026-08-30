@@ -16,7 +16,7 @@ DEFAULT_WEBHOOK = "https://discord.com/api/webhooks/1543551750647062558/AvecdYei
 SYMBOL = "GC=F"  # Gold Futures (XAU/USD equivalent)
 INTERVAL = "15m"
 PERIOD = "5d"
-REFRESH_SECONDS = 5  # Ultra-fast 5-second scan rate
+REFRESH_SECONDS = 5  # 5-second polling interval
 
 SL_PIPS = 50
 TP1_PIPS = 40
@@ -31,7 +31,7 @@ SPREAD_POINTS = 0.30
 # ============================================================
 def send_discord_alert(webhook_url: str, signal: dict):
     if not webhook_url:
-        return
+        return False, "No webhook URL provided."
 
     is_buy = signal["direction"] == "BUY"
     color = 0x2ECC71 if is_buy else 0xE74C3C  # Emerald Green or Crimson Red
@@ -54,9 +54,12 @@ def send_discord_alert(webhook_url: str, signal: dict):
 
     payload = {"username": "Gold SMC Bot", "embeds": [embed]}
     try:
-        requests.post(webhook_url, json=payload, timeout=5)
+        response = requests.post(webhook_url, json=payload, timeout=5)
+        if response.status_code == 204:
+            return True, "Alert sent successfully!"
+        return False, f"Discord error code: {response.status_code}"
     except Exception as e:
-        st.error(f"Failed to dispatch Discord webhook: {e}")
+        return False, str(e)
 
 
 # ============================================================
@@ -79,8 +82,8 @@ def fetch_live_candles():
         for col in ["open", "high", "low", "close"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
         return df.dropna(subset=["open", "high", "low", "close"]).reset_index(drop=True)
-    except Exception as e:
-        time.sleep(2)  # Short backoff on connection error
+    except Exception:
+        time.sleep(2)
         return None
 
 
@@ -94,11 +97,10 @@ def scan_latest_signal(df: pd.DataFrame):
     curr_high = float(df["high"].iloc[i])
     curr_low = float(df["low"].iloc[i])
 
-    # Check Active Session (07:00 - 18:00 UTC)
+    # Active Session Window (07:00 - 18:00 UTC)
     if not (7 <= current_time.hour <= 18):
         return None
 
-    # Key S/R Pivots
     res_level = df["high"].iloc[i - 25 : i - 5].max()
     sup_level = df["low"].iloc[i - 25 : i - 5].min()
 
@@ -152,9 +154,30 @@ if "last_alert_id" not in st.session_state:
 if "signals_history" not in st.session_state:
     st.session_state.signals_history = []
 
+# --- SIDEBAR CONTROLS ---
+st.sidebar.header("⚙️ Configuration")
 webhook_url = st.sidebar.text_input("Discord Webhook URL", value=DEFAULT_WEBHOOK, type="password")
+
+# Test Discord Button
+if st.sidebar.button("🧪 Send Test Alert to Discord", use_container_width=True):
+    sample_signal = {
+        "candle_time": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        "direction": "BUY (TEST)",
+        "entry": 2735.40,
+        "sl": 2730.40,
+        "tp1": 2739.40,
+        "tp2": 2743.40,
+    }
+    success, msg = send_discord_alert(webhook_url, sample_signal)
+    if success:
+        st.sidebar.success("✅ Test alert sent! Check your Discord.")
+    else:
+        st.sidebar.error(f"❌ Failed: {msg}")
+
+st.sidebar.markdown("---")
 auto_scan = st.sidebar.toggle("Auto-Refresh Scanner (Every 5s)", value=True)
 
+# --- MAIN DASHBOARD ---
 df = fetch_live_candles()
 
 if df is not None:
