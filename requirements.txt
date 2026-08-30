@@ -2,5 +2,4 @@ streamlit
 pandas
 numpy
 requests
-websocket-client
-git+https://github.com/StreamAlpha/tvdatafeed.git
+yfinance
