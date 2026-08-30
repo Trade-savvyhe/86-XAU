@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
-from tvDatafeed import Interval, TvDatafeed
+import yfinance as yf
 
 st.set_page_config(page_title="XAUUSD SMC Scanner", page_icon="📈", layout="wide")
 
@@ -13,17 +13,16 @@ st.set_page_config(page_title="XAUUSD SMC Scanner", page_icon="📈", layout="wi
 # ============================================================
 DEFAULT_WEBHOOK = "https://discord.com/api/webhooks/1543551750647062558/AvecdYeit6FzvlHM64r_d-nkL-Vho2YifxA4ROp16MB6OhkmlNj1UDlvFeW_BnWrgYdV"
 
-SYMBOL = "XAUUSD"
-EXCHANGE = "OANDA"
-INTERVAL = Interval.in_15_minute
-N_BARS = 300
+SYMBOL = "GC=F"  # Gold Futures (XAU/USD equivalent on Yahoo Finance)
+INTERVAL = "15m"
+PERIOD = "5d"
 
 SL_PIPS = 50
 TP1_PIPS = 40
 TP2_PIPS = 80
-SL_DISTANCE = SL_PIPS * 0.10
-TP1_DISTANCE = TP1_PIPS * 0.10
-TP2_DISTANCE = TP2_PIPS * 0.10
+SL_DISTANCE = SL_PIPS * 0.10   # $5.00
+TP1_DISTANCE = TP1_PIPS * 0.10 # $4.00
+TP2_DISTANCE = TP2_PIPS * 0.10 # $8.00
 SPREAD_POINTS = 0.30
 
 # ============================================================
@@ -41,7 +40,7 @@ def send_discord_alert(webhook_url: str, signal: dict):
         "description": "High-confluence Liquidity Sweep + FVG Mitigation triggered.",
         "color": color,
         "fields": [
-            {"name": "Pair", "value": f"`{SYMBOL}`", "inline": True},
+            {"name": "Pair", "value": "`XAUUSD / Gold`", "inline": True},
             {"name": "Session", "value": "`Active Killzone`", "inline": True},
             {"name": "Entry Price", "value": f"**${signal['entry']:.2f}**", "inline": True},
             {"name": "Stop Loss (50p)", "value": f"**${signal['sl']:.2f}**", "inline": True},
@@ -63,17 +62,25 @@ def send_discord_alert(webhook_url: str, signal: dict):
 # DATA FETCHER & STRATEGY SCANNER
 # ============================================================
 def fetch_live_candles():
-    tv = TvDatafeed()
-    df = tv.get_hist(symbol=SYMBOL, exchange=EXCHANGE, interval=INTERVAL, n_bars=N_BARS)
-    if df is None or df.empty:
+    try:
+        ticker = yf.Ticker(SYMBOL)
+        df = ticker.history(period=PERIOD, interval=INTERVAL)
+        if df is None or df.empty:
+            return None
+        df = df.reset_index()
+        if "Datetime" in df.columns:
+            df = df.rename(columns={"Datetime": "time"})
+        elif "Date" in df.columns:
+            df = df.rename(columns={"Date": "time"})
+            
+        df.columns = [c.lower() for c in df.columns]
+        df["time"] = pd.to_datetime(df["time"])
+        for col in ["open", "high", "low", "close"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        return df.dropna(subset=["open", "high", "low", "close"]).reset_index(drop=True)
+    except Exception as e:
+        st.error(f"Error fetching market data: {e}")
         return None
-    df = df.reset_index()
-    if "datetime" in df.columns:
-        df = df.rename(columns={"datetime": "time"})
-    df["time"] = pd.to_datetime(df["time"])
-    for col in ["open", "high", "low", "close"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-    return df.dropna().reset_index(drop=True)
 
 
 def scan_latest_signal(df: pd.DataFrame):
@@ -152,7 +159,7 @@ df = fetch_live_candles()
 if df is not None:
     latest_candle = df.iloc[-1]
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Current Price", f"${latest_candle['close']:.2f}")
+    col1.metric("Current Gold Price", f"${latest_candle['close']:.2f}")
     col2.metric("Candle High", f"${latest_candle['high']:.2f}")
     col3.metric("Candle Low", f"${latest_candle['low']:.2f}")
     col4.metric("Last Update (UTC)", latest_candle["time"].strftime("%H:%M:%S"))
@@ -174,14 +181,14 @@ if df is not None:
     else:
         st.info("Scanning... No active mitigation setup on current 15M candle.")
 
-    st.subheader("Recent Market Data")
-    st.dataframe(df.tail(10), use_container_width=True)
+    st.subheader("Recent 15M Market Data")
+    st.dataframe(df[["time", "open", "high", "low", "close", "volume"]].tail(10), use_container_width=True)
 
     if st.session_state.signals_history:
         st.subheader("Triggered Alerts Log")
         st.dataframe(pd.DataFrame(st.session_state.signals_history), use_container_width=True)
 else:
-    st.warning("Connecting to TradingView feed...")
+    st.warning("Connecting to market data feed...")
 
 if auto_scan:
     time.sleep(60)
